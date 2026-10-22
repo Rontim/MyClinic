@@ -46,7 +46,7 @@ def test_register_rejects_weak_password(client):
     assert Patient.objects.count() == 0  # nothing half-created
 
 
-def test_login_and_me_returns_patient_id(client):
+def test_login_and_me_returns_patient_profile(client):
     client.post(REGISTER, PAYLOAD, format="json")
     token = client.post(
         LOGIN, {"email": PAYLOAD["email"], "password": PAYLOAD["password"]}, format="json")
@@ -55,7 +55,8 @@ def test_login_and_me_returns_patient_id(client):
 
     me = client.get(ME)
     assert me.status_code == 200
-    assert me.json()["patient_id"] == Patient.objects.get().id
+    assert me.json()["full_name"] == Patient.objects.get().full_name
+    assert me.json()["phone"] == Patient.objects.get().phone
     assert me.json()["role"] == "patient"
 
 
