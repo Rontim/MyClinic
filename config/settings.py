@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     "drf_spectacular",
     # Local
     "accounts",
+    "appointments",
+    "doctors",
 ]
 
 MIDDLEWARE = [
