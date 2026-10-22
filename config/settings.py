@@ -1,12 +1,36 @@
 """Django settings for the MyClinic API project."""
 
+import os
+from datetime import timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "django-insecure-development-only-change-before-deployment"
-DEBUG = True
-ALLOWED_HOSTS = []
+
+def env_bool(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name: str, default: str = "") -> list[str]:
+    return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
+
+
+# --- Core -------------------------------------------------------------------
+DEBUG = env_bool("DJANGO_DEBUG", False)
+
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "insecure-dev-key-do-not-use-in-production"
+    else:
+        raise RuntimeError(
+            "DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false.")
+
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
+
+# Cloud Run terminates TLS and forwards the original scheme.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -15,12 +39,17 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Third party
     "rest_framework",
-
+    "djoser",
+    "drf_spectacular",
+    # Local
+    "accounts",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -29,7 +58,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "myclinic.urls"
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
@@ -46,15 +75,24 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "myclinic.wsgi.application"
-ASGI_APPLICATION = "myclinic.asgi.application"
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
+# --- Database (PostgreSQL) ---------------------------------------------------
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME", "clinic"),
+        "USER": os.environ.get("DB_USER", "clinic"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "clinic"),
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
+        "CONN_MAX_AGE": 60,
     }
 }
+
+# --- Auth --------------------------------------------------------------------
+AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -64,15 +102,62 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
-USE_I18N = True
+TIME_ZONE = "Africa/Nairobi"
+USE_I18N = False
 USE_TZ = True
 
+# --- Static files ------------------------------------------------------------
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# --- Booking rules -----------------------------------------------------------
+SLOT_MINUTES = 30
+BOOKING_MIN_LEAD_MINUTES = int(
+    os.environ.get("BOOKING_MIN_LEAD_MINUTES", "60"))
+
+# --- DRF / JWT / Djoser / OpenAPI --------------------------------------------
 REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
-    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SIMPLE_JWT = {
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+}
+
+DJOSER = {
+    "LOGIN_FIELD": "email",
+    "USER_CREATE_PASSWORD_RETYPE": False,
+    "SEND_ACTIVATION_EMAIL": False,
+    "SERIALIZERS": {
+        "user_create": "accounts.serializers.RegistrationSerializer",
+        "user": "accounts.serializers.UserSerializer",
+        "current_user": "accounts.serializers.UserSerializer",
+    },
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Clinic Booking API",
+    "DESCRIPTION": "Book, cancel and reschedule clinic appointments.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
 }
