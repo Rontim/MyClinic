@@ -123,15 +123,15 @@ Time-off and holiday exceptions, multiple clinics, variable appointment lengths,
 ```bash
 cp .env.example .env
 docker compose up --build
-docker compose exec web python manage.py migrate
-docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py seed_doctors
+docker compose exec api python manage.py migrate
+docker compose exec api python manage.py createsuperuser
+docker compose exec api python manage.py seed_doctors
 ```
 
 Run tests (requires Postgres, as the double-booking constraint is Postgres-specific):
 
 ```bash
-docker compose exec web pytest
+docker compose exec api pytest
 ```
 
 ---
