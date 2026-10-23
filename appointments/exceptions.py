@@ -57,6 +57,12 @@ class AppointmentNotFound(BookingError):
     default_detail = "Appointment not found."
 
 
+class PatientNotFound(BookingError):
+    status_code = 404
+    code = "patient_not_found"
+    default_detail = "Patient not found."
+
+
 class DoctorNotFound(BookingError):
     status_code = 404
     code = "doctor_not_found"

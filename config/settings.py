@@ -154,7 +154,7 @@ DJOSER = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Clinic Booking API",
+    "TITLE": "MyClinic Booking API",
     "DESCRIPTION": "Book, cancel and reschedule clinic appointments.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
