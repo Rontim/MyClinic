@@ -1,0 +1,104 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: myclinic-512512
+      REGION: africa-south1
+      SERVICE: clinic-api
+      MIGRATE_JOB: clinic-migrate
+      RUNTIME_SA: clinic-runtime@myclinic-512512.iam.gserviceaccount.com
+      SQL_CONNECTION: myclinic-512512:africa-south1:clinic-db
+      IMAGE: africa-south1-docker.pkg.dev/myclinic-512512/clinic/api
+      APP_ENV: >-
+        DJANGO_DEBUG=false,
+        DB_HOST=/cloudsql/myclinic-512512:africa-south1:clinic-db,
+        DB_NAME=clinic,
+        DB_USER=clinic,
+        DJANGO_ALLOWED_HOSTS=.run.app,
+        DJANGO_CSRF_TRUSTED_ORIGINS=https://*.run.app
+      APP_SECRETS: >-
+        DJANGO_SECRET_KEY=clinic-django-secret-key:latest,
+        DB_PASSWORD=clinic-db-password:latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push image (tagged with the commit SHA)
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --target prod -t "${IMAGE}:${GITHUB_SHA}" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+
+      - name: Run database migrations (Cloud Run job, same image)
+        run: |
+          gcloud run jobs deploy "$MIGRATE_JOB" \
+            --region "$REGION" \
+            --image "${IMAGE}:${GITHUB_SHA}" \
+            --service-account "$RUNTIME_SA" \
+            --set-cloudsql-instances "$SQL_CONNECTION" \
+            --set-env-vars "$(printf '%s' "$APP_ENV" | tr -d ' ')" \
+            --set-secrets "$(printf '%s' "$APP_SECRETS" | tr -d ' ')" \
+            --command python \
+            --args "manage.py,migrate,--noinput" \
+            --max-retries 0 \
+            --task-timeout 600 \
+            --execute-now --wait
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --region "$REGION" \
+            --image "${IMAGE}:${GITHUB_SHA}" \
+            --service-account "$RUNTIME_SA" \
+            --set-cloudsql-instances "$SQL_CONNECTION" \
+            --set-env-vars "$(printf '%s' "$APP_ENV" | tr -d ' ')" \
+            --set-secrets "$(printf '%s' "$APP_SECRETS" | tr -d ' ')" \
+            --allow-unauthenticated \
+            --port 8080 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --memory 512Mi \
+            --cpu-boost \
+            --quiet
+
+      - name: Smoke test the live service
+        run: |
+          URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
+          echo "Deployed: $URL"
+          echo "### Deployed :rocket: ${URL}" >> "$GITHUB_STEP_SUMMARY"
+          ok=0
+          for attempt in $(seq 1 10); do
+            if curl -fsS "${URL}/api/health/"; then ok=1; break; fi
+            echo " (not ready, retrying)"; sleep 6
+          done
+          test "$ok" = 1                      # health also proves the database connection works
+          code="$(curl -s -o /dev/null -w '%{http_code}' "${URL}/api/doctors/")"
+          test "$code" = 401                  # routes are live and auth is enforced

@@ -1,4 +1,4 @@
-# MyClinic API
+# MyClinic Booking API
 
 A REST API for a small clinic (5 doctors) where patients view free 30-minute slots, book, cancel and reschedule appointments.
 
@@ -8,7 +8,7 @@ A REST API for a small clinic (5 doctors) where patients view free 30-minute slo
 | --- | --- |
 | **Live URL** | `TODO: https://<cloud-run-url>` |
 | **API docs** | `TODO: https://<cloud-run-url>/api/docs/` |
-| **Repository** | `https://github.com/Rontim/myclinic-api` |
+| **Repository** | `TODO` |
 | **Deploy branch** | `main` |
 
 ## Contents
@@ -42,17 +42,21 @@ The service catches `IntegrityError` and returns `409 Conflict`. Cancelled rows 
 ### Models
 
 ```
-User (custom, Djoser)  email, role (patient | staff)
+User (custom, Djoser)  email, role (patient | doctor | staff), is_staff (derived from role)
 Patient                user (1:1), full_name, phone
-Doctor                 full_name, specialty, is_active
+Doctor                 user (1:1, required, role=doctor), full_name, specialty, is_active
 WorkingHours           doctor, weekday (0=Mon..6=Sun), start_time, end_time
 Appointment            doctor, patient, start_time (UTC), end_time,
                        status (booked | cancelled), cancellation_reason,
-                       cancelled_at, created_at, updated_at
+                       cancelled_by (patient | doctor | staff), cancelled_at,
+                       created_at, updated_at
 ```
 
 - `WorkingHours` allows multiple rows per doctor per weekday, so a lunch break is simply two intervals.
-- `Appointment` carries the partial unique constraint above.
+- `Appointment` carries the partial unique constraint above, plus check constraints: `end > start`, and a cancelled row must have a non-blank reason, `cancelled_by` and `cancelled_at` (a booked row must have none). Bad states can't be written even by code that bypasses the services.
+- `Doctor.user` is required: doctors don't exist without a login. Staff provision a doctor in one step in Django admin (email + password + profile); the form creates the `role=doctor` user and the `Doctor` profile in the same transaction, so there is no half-created state. Staff can also reset a doctor's password from that screen. The linked user must have `role=doctor`, and a doctor's account can't be deleted while a profile points at it (set `is_active=False` instead).
+- Doctors and patients use `on_delete=PROTECT` on appointments, so history is never lost by deleting a profile. Deactivate a doctor (`is_active`) instead.
+- Working-hour boundaries must sit on the 30-minute grid, so slot generation and booking validation share one grid.
 
 ### Components
 
@@ -73,9 +77,17 @@ appointments/   Appointment, services.py, views, serializers
 2. **Booking validation order.** Doctor exists and is active → start is on the 30-minute grid → slot lies entirely inside working hours → not in the past and not within the minimum lead time (`BOOKING_MIN_LEAD_MINUTES = 60`) → DB constraint decides whether it is taken.
 3. **Reschedule.** Runs in `transaction.atomic()` with `select_for_update()` on the appointment. It updates in place (same appointment ID) and applies the same validation as a fresh booking. Rescheduling to the identical slot is rejected.
 4. **Cancel.** Sets `status`, `cancellation_reason` and `cancelled_at`. Appointments that have already started cannot be cancelled.
-5. **Auth and permissions.** Djoser with JWT. The patient is derived from the token, never from the request body. Patients can view and modify only their own appointments; staff can access all. Doctors and working hours are managed through Django admin.
+5. **Who can do what.** Patients: book, view, cancel and reschedule their own. Doctors: view appointments assigned to them and cancel them (recorded in `cancelled_by`); they cannot book or reschedule, since moving a patient's slot without asking is riskier than cancelling it. Staff: everything. **Auth and permissions.** Djoser with JWT. The patient is derived from the token, never from the request body. `User.role` (patient / doctor / staff) is the single source of truth. Django's `is_staff` is derived from it by a `pre_save` signal (staff → true, anything else → false; superusers untouched), so the two can't drift apart. Patients can view and modify only their own appointments; staff can access all. Registration always creates a patient (`role` in the payload is ignored); doctor and staff accounts are created in Django admin. Doctors and working hours are managed through Django admin.
 6. **Status codes.** `400` validation (past, off-grid, outside hours, too soon), `401` unauthenticated, `403` ownership violation, `404` missing resource, `409` state conflict (slot taken, already cancelled).
 7. **Extra endpoint.** `GET /doctors` lets patients discover doctor IDs.
+
+### Booking logic (how the pieces fit)
+
+- `doctors/slots.py`: pure functions (generate slots, grid check, fits-in-hours, merge overlaps). No database, no clock.
+- `appointments/services.py`: `get_availability`, `book_appointment`, `cancel_appointment`, `reschedule_appointment`. The current time is a parameter (`now`), so tests control it without patching clocks.
+- **Validation is a friendly first check; the database is the guarantee.** Two requests can both pass validation for the same slot. The unique index lets one through and the other gets `409 slot_taken`. This is tested with two real threads racing for one slot.
+- `cancel` and `reschedule` lock the appointment row (`SELECT ... FOR UPDATE`) inside a transaction, so concurrent changes to the same appointment are serialised. A reschedule frees the old slot and claims the new one in a single `UPDATE`; if the new slot is taken, nothing changes.
+- Availability lists only slots that are actually bookable (booked, past and inside-lead-time slots are hidden), so the list and the booking rules can't disagree.
 
 ### Trade-offs considered
 
@@ -95,73 +107,167 @@ Time-off and holiday exceptions, multiple clinics, variable appointment lengths,
 
 ## Section 2: API reference
 
-> TODO: fill in with request/response examples once implemented.
+Interactive docs (Swagger UI) are served at `/api/docs/`; the raw OpenAPI schema is at `/api/schema/`. All paths below are under `/api`. Everything except registration and login needs `Authorization: Bearer <access token>`.
 
-| Method | Path | Description | Auth |
+| Method | Path | Who | Description |
 | --- | --- | --- | --- |
-| POST | `/api/auth/users/` | Register (Djoser) | Public |
-| POST | `/api/auth/jwt/create/` | Obtain JWT | Public |
-| GET | `/api/doctors/` | List active doctors | Authenticated |
-| GET | `/api/doctors/{id}/availability/?date=YYYY-MM-DD` | Free 30-minute slots for a doctor on a date | Authenticated |
-| POST | `/api/appointments/` | Book a slot | Patient |
-| PATCH | `/api/appointments/{id}/cancel/` | Cancel with a reason | Owner / staff |
-| PATCH | `/api/appointments/{id}/reschedule/` | Move to a new slot | Owner / staff |
-| GET | `/api/patients/{id}/appointments/` | Upcoming appointments sorted by date (bonus) | Owner / staff |
+| POST | `/auth/users/` | public | Register a patient (`email`, `password`, `full_name`, optional `phone`) |
+| POST | `/auth/jwt/create/` | public | Log in, returns `access` and `refresh` tokens |
+| GET | `/auth/users/me/` | any | Current user, with `role`, `patient_id` / `doctor_id` |
+| GET | `/doctors/` | any | Active doctors (extra endpoint, so patients can discover doctor ids) |
+| GET | `/doctors/{id}/availability/?date=YYYY-MM-DD` | any | **Free 30-minute slots** for a doctor on a date |
+| POST | `/appointments/` | patient, staff | **Book a slot** |
+| GET | `/appointments/{id}/` | participants | One appointment |
+| PATCH | `/appointments/{id}/cancel/` | patient, doctor, staff | **Cancel** with a `reason` |
+| PATCH | `/appointments/{id}/reschedule/` | patient, staff | **Reschedule** to a new `start_time` |
+| GET | `/patients/{id}/appointments/` | patient (own), staff | **Bonus:** upcoming appointments, soonest first |
+| GET | `/doctors/me/appointments/` | doctor | The doctor's own schedule (`?date=`, `?status=`) |
+
+### Who can do what
+
+| | Book | View / cancel | Reschedule |
+| --- | --- | --- | --- |
+| Patient | own (identity from token) | own | own |
+| Doctor | no | appointments assigned to them | no |
+| Staff | for any patient (`patient` id required) | all | all |
+
+- An appointment you may not see behaves as if it doesn't exist (`404 appointment_not_found`), so ids don't leak. A role that never has an action gets `403` (e.g. a doctor trying to book or reschedule).
+- Asking for another person's data by their id (`/patients/{other id}/appointments/`) is `403`, whether or not that patient exists.
+- Whoever cancels is recorded in `cancelled_by` (patient / doctor / staff).
+
+### Example
+
+```bash
+# 1. register and log in
+curl -X POST $URL/api/auth/users/ -H 'Content-Type: application/json' \
+  -d '{"email":"jane@example.com","password":"S3cure-pass-phrase","full_name":"Jane Wanjiru"}'
+TOKEN=$(curl -s -X POST $URL/api/auth/jwt/create/ -H 'Content-Type: application/json' \
+  -d '{"email":"jane@example.com","password":"S3cure-pass-phrase"}' | python -c 'import sys,json;print(json.load(sys.stdin)["access"])')
+
+# 2. see free slots, then book one
+curl "$URL/api/doctors/1/availability/?date=2030-01-08" -H "Authorization: Bearer $TOKEN"
+curl -X POST $URL/api/appointments/ -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"doctor": 1, "start_time": "2030-01-08T10:00:00+03:00"}'
+
+# 3. cancel it
+curl -X PATCH $URL/api/appointments/1/cancel/ -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"reason": "Feeling better"}'
+```
+
+Times are ISO 8601. A `start_time` without an offset is read as clinic-local (Nairobi) time, and responses are rendered in clinic time (`+03:00`).
+
+**Behaviours worth knowing**
+
+- *Availability* shows only slots that can actually be booked: booked, past and inside-the-60-minute-lead-time slots are hidden.
+- *Upcoming appointments* means future and still booked; cancelled ones are excluded.
+- *Doctor schedule* defaults to today onwards; `?date=` shows one day (past allowed); `?status=booked|cancelled` filters.
 
 ### Error format
 
+Every error, including Djoser's, has one shape: a human `detail` and a stable machine `code`.
+
 ```json
-{ "detail": "Human-readable message", "code": "slot_taken" }
+{ "detail": "That slot has already been booked.", "code": "slot_taken" }
 ```
+
+Invalid request bodies add per-field messages:
+
+```json
+{ "detail": "Invalid input.", "code": "validation_error", "errors": { "full_name": ["This field is required."] } }
+```
+
+| Status | Codes | Meaning |
+| --- | --- | --- |
+| 400 | `off_grid`, `outside_working_hours`, `slot_in_past`, `too_soon`, `doctor_inactive`, `same_slot`, `reason_required`, `validation_error` | The request is not acceptable as sent |
+| 401 / 403 | `not_authenticated`, `permission_denied` | Not logged in / not allowed |
+| 404 | `appointment_not_found`, `doctor_not_found`, `patient_not_found`, `not_found` | No such resource (or not visible to you) |
+| 409 | `slot_taken`, `already_cancelled`, `appointment_cancelled`, `appointment_started` | Valid request, but it conflicts with the current state |
 
 ---
 
 ## Running locally
 
-> TODO: confirm commands once the scaffold exists.
-
 ```bash
-cp .env.example .env
-docker compose up --build
-docker compose exec api python manage.py migrate
+docker compose up --build        # starts Postgres + API; migrations run on startup
 docker compose exec api python manage.py createsuperuser
-docker compose exec api python manage.py seed_doctors
+docker compose exec api python manage.py seed_doctors --password '<strong-password>'
+# 5 demo doctors, each with a login (e.g. amina.otieno@clinic.example), role=doctor and working hours.
+# Idempotent. Omit --password to have a random one generated and printed once.
 ```
 
-Run tests (requires Postgres, as the double-booking constraint is Postgres-specific):
+The API is at <http://localhost:8000/api/docs/>. Defaults work without a `.env`;
+copy `.env.example` to `.env` only to override database credentials.
+
+Run tests (they need Postgres, as the double-booking constraint is Postgres-specific):
 
 ```bash
 docker compose exec api pytest
 ```
 
+Without Docker: start any Postgres, `pip install -r requirements-dev.txt`, export
+`DJANGO_DEBUG=true` and the `DB_*` variables, then run `pytest`.
+
 ---
 
 ## Section 3: Deployment and CI/CD
 
-### Target architecture (GCP)
+| | |
+| --- | --- |
+| **Public URL** | `TODO: set after the first deploy` |
+| **Deploy branch** | `main` |
+| **Trigger** | Merging a pull request into `main` (a push to `main`) runs the Deploy workflow. It can also be re-run by hand from the Actions tab. |
+
+### Architecture (GCP, region `africa-south1`)
 
 | Component | Service |
 | --- | --- |
-| API container | Cloud Run |
-| Database | Cloud SQL for PostgreSQL (smallest suitable tier) |
-| Container images | Artifact Registry |
-| Secrets (`SECRET_KEY`, DB password) | Secret Manager |
-| CI → GCP auth | Workload Identity Federation (no long-lived service account keys) |
+| API container | Cloud Run (`clinic-api`), scales to zero |
+| Database | Cloud SQL for PostgreSQL 16, smallest shared-core tier |
+| Container images | Artifact Registry, tagged with the commit SHA |
+| Secrets (`DJANGO_SECRET_KEY`, DB password) | Secret Manager, injected as env vars at runtime |
+| Migrations | A Cloud Run job (`clinic-migrate`) running the same image |
+| GitHub to GCP login | Workload Identity Federation: no service-account keys exist anywhere |
 
-### Pipeline (GitHub Actions)
+Cloud Run reaches Cloud SQL through the built-in Cloud SQL connection (a Unix socket under `/cloudsql/...`), so no database credentials or IP allow-lists are exposed.
 
-**On every pull request:** start a Postgres service container, install dependencies, run the test suite (and linting).
+### What the pipeline does
 
-**On merge to `main`:**
+**On every pull request** (`.github/workflows/ci.yml`):
 
-1. Run the tests again.
-2. Authenticate to GCP via Workload Identity Federation.
-3. Build the Docker image and push it to Artifact Registry, tagged with the commit SHA.
-4. Run database migrations as a Cloud Run Job using the new image.
-5. Deploy the new revision to Cloud Run.
-6. Smoke-test the health endpoint.
+1. Start a real Postgres 16 service container (the double-booking guard is a Postgres index, so SQLite would prove nothing).
+2. `manage.py check`, then `makemigrations --check`, which fails if a model change is missing its migration.
+3. Run the full test suite, with `DEBUG` off to mirror production.
+4. In parallel, build the production Docker image, so a broken Dockerfile is caught on the PR.
 
-Branch protection on `main` requires the PR checks to pass before merging.
+**On merge to `main`** (`.github/workflows/deploy.yml`):
+
+1. Re-run the same CI workflow. Deployment waits for it to pass.
+2. Authenticate to GCP with a short-lived OIDC token (no stored credentials).
+3. Build the image, tag it with the commit SHA and push it to Artifact Registry.
+4. Run `manage.py migrate` as a Cloud Run job and wait for it to finish.
+5. Deploy the new image to Cloud Run.
+6. Smoke test: `/api/health/` must return 200 (this also proves the database connection), and `/api/doctors/` must return 401 (routes are live and auth is enforced). If either fails, the workflow fails.
+
+Deploys are serialised (`concurrency`), and a deploy is never cancelled half way.
+
+### Design decisions
+
+- **Migrations run as a separate job before the deploy**, not at container start. With several Cloud Run instances starting at once, in-container migrations would race each other and slow every cold start. The cost is that the old revision briefly runs against the new schema, so migrations must stay backward compatible (add, don't drop or rename in one step).
+- **GitHub is only trusted when the workflow runs on `main` in this repository.** The Workload Identity provider rejects tokens from any other repository or branch, so a pull request cannot deploy. PR runs need no cloud credentials at all.
+- **Least-privilege identities.** The running app can read two secrets and use Cloud SQL. The deployer can deploy, push images and act as the runtime identity. Neither has project owner rights.
+- **Images are tagged by commit SHA**, so every deploy is traceable and a rollback is "redeploy a previous revision" (`gcloud run services update-traffic clinic-api --to-revisions=<REVISION>=100 --region africa-south1`).
+- **Branch protection on `main`** (requires a PR and the `test` and `docker-build` checks) is what makes "merged" mean "reviewed and green". It is configured in the GitHub repository settings, not in code.
+
+### Known limitations
+
+- `DJANGO_ALLOWED_HOSTS` is `.run.app` and CSRF origins are `https://*.run.app`, because the exact URL isn't known before the first deploy. Tighten both to the real URL afterwards.
+- Secrets are read when an instance starts, so rotating one needs a new revision (re-run the Deploy workflow).
+- Cloud SQL runs a single zone with no high availability. Fine for this scale, and the obvious upgrade for production.
+- The deployment uses trial credits and keeps billing until deleted. Teardown: delete the Cloud Run service and job, then `gcloud sql instances delete clinic-db`.
+
+### First-time data
+
+> TODO: after the first successful deploy, create the first superuser and seed the demo doctors.
 
 ---
 
@@ -170,9 +276,14 @@ Branch protection on `main` requires the PR checks to pass before merging.
 - Clinic timezone is `Africa/Nairobi`. Naive datetimes are treated as clinic-local.
 - Availability excludes slots that could not be booked (in the past or within the 60-minute lead time), so the list always matches what booking will accept.
 - Every appointment is exactly 30 minutes and starts on the `:00` or `:30` mark.
-- Rescheduling keeps the same appointment ID.
+- Rescheduling keeps the same appointment ID and the same doctor; moving to a different doctor is a new booking.
+- Reschedule checks, in order: appointment exists → not cancelled (`409`) → not already started (`409`) → the new slot passes the same rules as a fresh booking → not the current slot (`400 same_slot`) → not taken (`409`).
 - Cancelling or rescheduling an appointment that has already started is rejected.
-- Doctors are managed by staff via Django admin. There is no public doctor-management API.
+- Overlapping working-hour intervals are rejected by model validation (admin/forms), not by a database constraint. Slot generation also merges overlaps defensively, so a bypassed rule can't produce duplicate slots. Trade-off: a Postgres exclusion constraint would be airtight but needs `btree_gist` and a range expression for a time-only column; not worth the complexity for 5 doctors.
+- A patient may hold overlapping appointments with different doctors (only a doctor's own slot is exclusive).
+- Appointments are read-only in Django admin; changes go through the API so every rule is enforced.
+- Doctor accounts are created by staff, never self-registered. Passwords are set by staff and handed over out of band; there is no email, so Djoser's activation and password-reset emails are off. Adding an email flow is the natural next step.
+- Staff (`role=staff`) are automatically placed in a "Clinic staff" group that can manage doctors and working hours and view patients and appointments. They get no access to the raw Users admin, so they can't promote themselves or anyone else to staff or superuser; the first staff accounts and superusers are created with `createsuperuser` or by a superuser. There is no public doctor-management API.
 
 ---
 
