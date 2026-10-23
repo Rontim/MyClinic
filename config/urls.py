@@ -13,6 +13,12 @@ urlpatterns = [
     path("api/auth/", include("djoser.urls")),
     path("api/auth/", include("djoser.urls.jwt")),
 
+    # Appointments
+    path("api/", include("appointments.urls")),
+
+    # Doctors
+    path("api/", include("doctors.urls")),
+
     # OpenAPI
     path("api/schema/", SpectacularAPIView.as_view(permission_classes=[]), name="schema"),
     path(

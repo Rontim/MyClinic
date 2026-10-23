@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: clinic
+          POSTGRES_USER: clinic
+          POSTGRES_PASSWORD: clinic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clinic -d clinic"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DJANGO_SECRET_KEY: ci-only-value-not-a-real-secret-0123456789
+      DB_HOST: localhost
+      DB_NAME: clinic
+      DB_USER: clinic
+      DB_PASSWORD: clinic
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Django system check
+        run: python manage.py check
+      - name: No model changes missing a migration
+        run: python manage.py makemigrations --check --dry-run --noinput
+      - name: Tests (real Postgres, because double-booking is enforced by a Postgres index)
+        run: pytest --create-db
+
+  docker-build:
+    # Proves the production image builds, so a broken Dockerfile is caught on the PR and
+    # not at deploy time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build --target prod -t clinic-api:ci .

@@ -44,3 +44,10 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("id", "email", "role", "full_name", "phone")
+
+
+class PatientSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Patient
+        fields = ("id", "full_name", "phone")
+        read_only_fields = fields

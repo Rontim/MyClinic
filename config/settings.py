@@ -34,6 +34,9 @@ CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
 # Cloud Run terminates TLS and forwards the original scheme.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -48,6 +51,8 @@ INSTALLED_APPS = [
     "drf_spectacular",
     # Local
     "accounts",
+    "appointments",
+    "doctors",
 ]
 
 MIDDLEWARE = [
@@ -152,7 +157,7 @@ DJOSER = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Clinic Booking API",
+    "TITLE": "MyClinic Booking API",
     "DESCRIPTION": "Book, cancel and reschedule clinic appointments.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
