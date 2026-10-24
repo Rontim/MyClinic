@@ -1,3 +1,4 @@
+import os
 from datetime import time
 
 from django.contrib.auth.password_validation import validate_password
@@ -28,12 +29,17 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--password",
-            help="Password for the new doctor accounts. If omitted, a random one is generated and printed once.",
+            help=(
+                "Password for the new doctor accounts. Falls back to the SEED_DOCTOR_PASSWORD environment "
+                "variable (use this on servers so the password isn't stored in a command line). "
+                "If neither is given, a random one is generated and printed once."
+            ),
         )
 
     @transaction.atomic
     def handle(self, *args, **options):
-        password = options["password"]
+        password = options["password"] or os.environ.get(
+            "SEED_DOCTOR_PASSWORD")
         generated = not password
         if generated:
             password = get_random_string(16)
@@ -46,15 +52,22 @@ class Command(BaseCommand):
         for email, name, specialty, works_saturday in DEMO_DOCTORS:
             if Doctor.objects.filter(user__email=email).exists():
                 continue
-            user = User.objects.create_user(email=email, password=password, role=Role.DOCTOR)
-            doctor = Doctor.objects.create(user=user, full_name=name, specialty=specialty)
+            user = User.objects.create_user(
+                email=email, password=password, role=Role.DOCTOR)
+            doctor = Doctor.objects.create(
+                user=user, full_name=name, specialty=specialty)
             created += 1
             for weekday in range(5):
-                WorkingHours.objects.create(doctor=doctor, weekday=weekday, start_time=time(8), end_time=time(12))
-                WorkingHours.objects.create(doctor=doctor, weekday=weekday, start_time=time(14), end_time=time(17))
+                WorkingHours.objects.create(
+                    doctor=doctor, weekday=weekday, start_time=time(8), end_time=time(12))
+                WorkingHours.objects.create(
+                    doctor=doctor, weekday=weekday, start_time=time(14), end_time=time(17))
             if works_saturday:
-                WorkingHours.objects.create(doctor=doctor, weekday=5, start_time=time(9), end_time=time(12))
+                WorkingHours.objects.create(
+                    doctor=doctor, weekday=5, start_time=time(9), end_time=time(12))
 
-        self.stdout.write(self.style.SUCCESS(f"Seeded {created} new doctor(s); {len(DEMO_DOCTORS) - created} already existed."))
+        self.stdout.write(self.style.SUCCESS(
+            f"Seeded {created} new doctor(s); {len(DEMO_DOCTORS) - created} already existed."))
         if created and generated:
-            self.stdout.write(f"Generated password for the new doctor accounts (shown once): {password}")
+            self.stdout.write(
+                f"Generated password for the new doctor accounts (shown once): {password}")

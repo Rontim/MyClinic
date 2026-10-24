@@ -6,9 +6,9 @@ A REST API for a small clinic (5 doctors) where patients view free 30-minute slo
 
 | | |
 | --- | --- |
-| **Live URL** | `TODO: https://<cloud-run-url>` |
-| **API docs** | `TODO: https://<cloud-run-url>/api/docs/` |
-| **Repository** | `TODO` |
+| **Live URL** | `https://clinic-api-pubpakhhga-bq.a.run.app` |
+| **API docs** | `https://clinic-api-pubpakhhga-bq.a.run.app/api/docs/` |
+| **Repository** | `https://github.com/Rontim/MyClinic` |
 | **Deploy branch** | `main` |
 
 ## Contents
@@ -213,7 +213,7 @@ Without Docker: start any Postgres, `pip install -r requirements-dev.txt`, expor
 
 | | |
 | --- | --- |
-| **Public URL** | `TODO: set after the first deploy` |
+| **Public URL** | <https://clinic-api-pubpakhhga-bq.a.run.app/> |
 | **Deploy branch** | `main` |
 | **Trigger** | Merging a pull request into `main` (a push to `main`) runs the Deploy workflow. It can also be re-run by hand from the Actions tab. |
 
@@ -260,16 +260,18 @@ Deploys are serialised (`concurrency`), and a deploy is never cancelled half way
 
 ### Known limitations
 
-- `DJANGO_ALLOWED_HOSTS` is `.run.app` and CSRF origins are `https://*.run.app`, because the exact URL isn't known before the first deploy. Tighten both to the real URL afterwards.
+- `DJANGO_ALLOWED_HOSTS` and the CSRF origin are pinned to the service's exact URL in `deploy.yml`. If the Cloud Run service is ever deleted and recreated, its URL changes and both values must be updated (the smoke test will fail loudly if they are wrong).
 - Secrets are read when an instance starts, so rotating one needs a new revision (re-run the Deploy workflow).
 - Cloud SQL runs a single zone with no high availability. Fine for this scale, and the obvious upgrade for production.
 - The deployment uses trial credits and keeps billing until deleted. Teardown: delete the Cloud Run service and job, then `gcloud sql instances delete clinic-db`.
 
 ### First-time data
 
-> TODO: after the first successful deploy, create the first superuser and seed the demo doctors.
+`deploy/03-first-data.sh` (run in Cloud Shell once after the first deploy) creates the admin superuser and the 5 demo doctors in the live database. It uses a Cloud Run job, `clinic-manage`, that runs the same image with the same database access and executes one management command per run. Passwords live in Secret Manager and are injected as environment variables, so they never appear in a command line or in the job's visible configuration. Re-running it is safe.
 
----
+- Admin: `/admin/` (log in as the superuser).
+- Demo doctors: `amina.otieno@clinic.example`, `brian.kimani@clinic.example`, `cynthia.mwangi@clinic.example`, `david.njoroge@clinic.example`, `esther.wambui@clinic.example`, all with the password chosen when the script ran. They log in at `POST /api/auth/jwt/create/`.
+- Patients register themselves at `POST /api/auth/users/`.
 
 ## Assumptions on ambiguous requirements
 
