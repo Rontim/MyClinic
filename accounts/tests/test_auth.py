@@ -6,12 +6,12 @@ from accounts.models import Patient, User
 pytestmark = pytest.mark.django_db
 
 REGISTER = "/api/auth/users/"
-LOGIN = "/api/auth/jwt/create/"
+LOGIN = "/api/auth/login/"
 ME = "/api/auth/users/me/"
 
 PAYLOAD = {
     "email": "jane@example.com",
-    "password": "S3cure-pass-word",
+    "password": "S3cure-pass-phrase",
     "full_name": "Jane Wanjiru",
     "phone": "+254700000000",
 }
@@ -36,17 +36,18 @@ def test_register_requires_full_name(client):
     payload = {k: v for k, v in PAYLOAD.items() if k != "full_name"}
     resp = client.post(REGISTER, payload, format="json")
     assert resp.status_code == 400
-    assert "full_name" in resp.json()
+    assert resp.json()["code"] == "validation_error"
+    assert "full_name" in resp.json()["errors"]
 
 
 def test_register_rejects_weak_password(client):
     resp = client.post(
         REGISTER, {**PAYLOAD, "password": "12345678"}, format="json")
     assert resp.status_code == 400
-    assert Patient.objects.count() == 0  # nothing half-created
+    assert Patient.objects.count() == 0
 
 
-def test_login_and_me_returns_patient_profile(client):
+def test_login_and_me_returns_patient_id(client):
     client.post(REGISTER, PAYLOAD, format="json")
     token = client.post(
         LOGIN, {"email": PAYLOAD["email"], "password": PAYLOAD["password"]}, format="json")
@@ -55,8 +56,7 @@ def test_login_and_me_returns_patient_profile(client):
 
     me = client.get(ME)
     assert me.status_code == 200
-    assert me.json()["full_name"] == Patient.objects.get().full_name
-    assert me.json()["phone"] == Patient.objects.get().phone
+    assert me.json()["patient_id"] == Patient.objects.get().id
     assert me.json()["role"] == "patient"
 
 

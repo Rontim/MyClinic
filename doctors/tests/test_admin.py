@@ -50,7 +50,7 @@ def test_staff_creates_doctor_login_and_profile_in_one_step(staff_client):
 def test_new_doctor_can_log_in_with_the_password_staff_set(staff_client):
     staff_client.post(reverse("admin:doctors_doctor_add"),
                       new_doctor_payload())
-    resp = APIClient().post("/api/auth/jwt/create/",
+    resp = APIClient().post("/api/auth/login/",
                             {"email": "new.doctor@example.com", "password": PASSWORD}, format="json")
     assert resp.status_code == 200 and "access" in resp.json()
 
