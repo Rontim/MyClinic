@@ -6,9 +6,9 @@ A REST API for a small clinic (5 doctors) where patients view free 30-minute slo
 
 | | |
 | --- | --- |
-| **Live URL** | `TODO: https://<cloud-run-url>` |
-| **API docs** | `TODO: https://<cloud-run-url>/api/docs/` |
-| **Repository** | `TODO` |
+| **Live URL** | `https://clinic-api-pubpakhhga-bq.a.run.app` |
+| **API docs** | `https://clinic-api-pubpakhhga-bq.a.run.app/api/docs/` |
+| **Repository** | `https://github.com/Rontim/MyClinic` |
 | **Deploy branch** | `main` |
 
 ## Contents
