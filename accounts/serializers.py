@@ -1,6 +1,7 @@
 from django.db import transaction
 from djoser.serializers import UserCreateSerializer as DjoserUserCreateSerializer
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 from .models import Patient, User
 
@@ -37,13 +38,47 @@ class RegistrationSerializer(DjoserUserCreateSerializer):
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for the User model, including profile fields."""
 
+    patient_id = serializers.SerializerMethodField()
+    doctor_id = serializers.SerializerMethodField()
     full_name = serializers.CharField(
-        source="patient.full_name", read_only=True)
-    phone = serializers.CharField(source="patient.phone", read_only=True)
+        max_length=150, required=False, write_only=True)
+    phone = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, write_only=True)
 
     class Meta:
         model = User
-        fields = ("id", "email", "role", "full_name", "phone")
+        fields = ("id", "email", "role", "patient_id",
+                  "doctor_id", "full_name", "phone")
+        read_only_fields = ("id", "email", "role")
+
+    def get_patient_id(self, obj) -> int | None:
+        patient = getattr(obj, "patient", None)
+        return patient.id if patient else None
+
+    def get_doctor_id(self, obj) -> int | None:
+        doctor = getattr(obj, "doctor", None)
+        return doctor.id if doctor else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        patient = getattr(instance, "patient", None)
+        doctor = getattr(instance, "doctor", None)
+        profile = patient or doctor
+        data["full_name"] = profile.full_name if profile else None
+        data["phone"] = patient.phone if patient else None
+        return data
+
+    def update(self, instance, validated_data):
+        if not validated_data:
+            return instance
+        patient = getattr(instance, "patient", None)
+        if patient is None:
+            raise PermissionDenied(
+                "Only patient accounts can edit their profile here. Ask clinic staff to change other accounts.")
+        for field, value in validated_data.items():
+            setattr(patient, field, value)
+        patient.save(update_fields=list(validated_data))
+        return instance
 
 
 class PatientSummarySerializer(serializers.ModelSerializer):

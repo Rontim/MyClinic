@@ -9,9 +9,9 @@ from .views import health
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health, name="health"),
+
     # Accounts and Auth
-    path("api/auth/", include("djoser.urls")),
-    path("api/auth/", include("djoser.urls.jwt")),
+    path("api/auth/", include("accounts.urls")),
 
     # Appointments
     path("api/", include("appointments.urls")),
