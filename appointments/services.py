@@ -65,6 +65,15 @@ def get_availability(doctor: Doctor, day: date, *, now: datetime | None = None) 
 # Validation
 
 
+def day_bounds(day: date) -> tuple[datetime, datetime]:
+    """[start, end) of a clinic-local day as aware datetimes (comparable with UTC columns)."""
+    tz = _clinic_tz()
+    return (
+        datetime.combine(day, time.min, tzinfo=tz),
+        datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz),
+    )
+
+
 def validate_slot(doctor: Doctor, start: datetime, *, now: datetime | None = None) -> datetime:
     """
     Validate that a slot is valid for booking.

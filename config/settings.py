@@ -137,6 +137,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
 }
 
 SIMPLE_JWT = {
@@ -157,10 +158,11 @@ DJOSER = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "MyClinic Booking API",
+    "TITLE": "Clinic Booking API",
     "DESCRIPTION": "Book, cancel and reschedule clinic appointments.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "ENUM_NAME_OVERRIDES": {"RoleEnum": "accounts.models.Role"},
 }
 
 LOGGING = {
