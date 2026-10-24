@@ -35,8 +35,8 @@ jobs:
         DB_HOST=/cloudsql/myclinic-512512:africa-south1:clinic-db,
         DB_NAME=clinic,
         DB_USER=clinic,
-        DJANGO_ALLOWED_HOSTS=.run.app,
-        DJANGO_CSRF_TRUSTED_ORIGINS=https://*.run.app
+        DJANGO_ALLOWED_HOSTS=clinic-api-pubpakhhga-bq.a.run.app,
+        DJANGO_CSRF_TRUSTED_ORIGINS=https://clinic-api-pubpakhhga-bq.a.run.app
       APP_SECRETS: >-
         DJANGO_SECRET_KEY=clinic-django-secret-key:latest,
         DB_PASSWORD=clinic-db-password:latest
