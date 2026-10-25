@@ -14,11 +14,16 @@ concurrency:
 
 jobs:
   test:
+    name: Test and build Docker image
     uses: ./.github/workflows/ci.yml
 
   deploy:
+    name: Deploy to Production
     needs: test
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://clinic-api-pubpakhhga-bq.a.run.app
     permissions:
       contents: read
       id-token: write
