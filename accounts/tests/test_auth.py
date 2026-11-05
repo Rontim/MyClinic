@@ -32,6 +32,13 @@ def test_register_creates_user_and_patient_profile(client):
     assert Patient.objects.get(user=user).full_name == "Jane Wanjiru"
 
 
+def test_register_allows_missing_phone(client):
+    payload = {k: v for k, v in PAYLOAD.items() if k != "phone"}
+    resp = client.post(REGISTER, payload, format="json")
+    assert resp.status_code == 201, resp.content
+    assert Patient.objects.get(user__email=PAYLOAD["email"]).phone == ""
+
+
 def test_register_requires_full_name(client):
     payload = {k: v for k, v in PAYLOAD.items() if k != "full_name"}
     resp = client.post(REGISTER, payload, format="json")
