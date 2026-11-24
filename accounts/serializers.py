@@ -20,16 +20,21 @@ class RegistrationSerializer(DjoserUserCreateSerializer):
         fields = DjoserUserCreateSerializer.Meta.fields + PROFILE_FIELDS
 
     def validate(self, attrs):
-        """Djoser validates the user fields, but profile fields are not User Column fields, so lest hide them."""
-        profile_data = {field: attrs.pop(field) for field in PROFILE_FIELDS}
+        """Validate user fields separately from the patient profile fields."""
+        profile_data = {
+            "full_name": attrs.pop("full_name"),
+            "phone": attrs.pop("phone", ""),
+        }
         attrs = super().validate(attrs)
         attrs.update(profile_data)
         return attrs
 
     @transaction.atomic
     def create(self, validated_data):
-        profile_data = {field: validated_data.pop(
-            field) for field in PROFILE_FIELDS}
+        profile_data = {
+            "full_name": validated_data.pop("full_name"),
+            "phone": validated_data.pop("phone", ""),
+        }
         user = super().create(validated_data)
         Patient.objects.create(user=user, **profile_data)
         return user
